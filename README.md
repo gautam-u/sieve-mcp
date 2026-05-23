@@ -56,8 +56,8 @@ Verifies scanner rules and transcript source coverage are healthy.
 ```json
 {
   "fingerprintHealthy": true,
-  "ruleCount": 28,
-  "transcriptSourceCount": 9,
+  "ruleCount": "<n>",
+  "transcriptSourceCount": "<n>",
   "healthy": true,
   "issues": []
 }
@@ -80,7 +80,7 @@ Lists findings from the most recent scan.
     "severity": "critical",
     "sourcePath": "~/.claude/projects/myapp/transcript.jsonl",
     "sourceType": "ClaudeCode",
-    "secretFingerprint": "hmac:sha256:7f3a...",
+    "secretFingerprint": "<fingerprint>",
     "previewRedacted": "ghp_[REDACTED]",
     "providerExposureAssumed": true,
     "rotationStatus": "pending",
@@ -178,7 +178,7 @@ Redacts secrets from text, replacing values with `sieve://` placeholders.
     {
       "ruleId": "stripe-secret-key",
       "placeholder": "sieve://myapp/stripe-secret-key",
-      "fingerprint": "hmac:sha256:a1b2..."
+      "fingerprint": "<fingerprint>"
     }
   ]
 }
@@ -192,7 +192,7 @@ Raw values are **never** included in the response.
 
 Executes a command with macOS Keychain-resolved secrets injected as env vars. Secrets never transit the MCP channel.
 
-**Input:** `{ "command": "npm run deploy", "fingerprints": ["hmac:sha256:a1b2..."] }`
+**Input:** `{ "command": "npm run deploy", "fingerprints": ["<fingerprint>"] }`
 
 **Response:**
 ```json
@@ -224,7 +224,7 @@ stdout/stderr content is **never** returned — only line counts.
 | `.env` files | Selected project roots |
 | Custom sources | User-added folders |
 
-Cross-source correlation fires when the same secret fingerprint appears in both a transcript and a `.env` file (`CROSS_SOURCE_EXPOSURE`).
+Sieve correlates findings across source types — if the same secret appears in both a transcript and a `.env` file, it is flagged as a multi-source exposure.
 
 ## Security posture
 
