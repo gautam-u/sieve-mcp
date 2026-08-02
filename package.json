@@ -1,15 +1,22 @@
 {
   "name": "sieve-mcp",
   "version": "1.0.0",
-  "description": "MCP server for Sieve — local AI chat history secret scanner for macOS",
+  "description": "MCP server for Sieve \u2014 local AI chat history secret scanner for macOS",
   "main": "server.js",
   "bin": {
     "sieve-mcp": "./server.js"
   },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
   },
-  "keywords": ["mcp", "security", "secrets", "ai", "claude"],
+  "keywords": [
+    "mcp",
+    "security",
+    "secrets",
+    "ai",
+    "claude"
+  ],
   "license": "MIT",
   "engines": {
     "node": ">=18"
