@@ -1,105 +1,23 @@
 #!/usr/bin/env node
 /**
- * Introspection stub for MCP registry checks (Glama, etc.).
- * Responds to initialize and tools/list only.
- * Production binary ships inside the Sieve Mac app:
- *   /Applications/Sieve.app/Contents/MacOS/sieve-mcp
+ * Introspection stub for MCP registries (Glama and others).
+ *
+ * It answers `initialize` and `tools/list` with the same tool definitions the real server
+ * advertises (tools.json), so registries can index Sieve. Every `tools/call` explains how to
+ * install the real server. It reads no files and makes no network calls.
+ *
+ * The real server ships inside the Sieve Mac app:
+ *   /Applications/Sieve.app/Contents/MacOS/Sieve --mcp
  */
 
 const readline = require("readline");
+const TOOLS = require("./tools.json");
 
-const TOOLS = [
-  {
-    name: "sieve_health_status",
-    description: "Returns Sieve service health and finding counts.",
-    inputSchema: { type: "object", properties: {}, required: [] },
-  },
-  {
-    name: "sieve_self_test",
-    description: "Verifies scanner rules and transcript source coverage are healthy.",
-    inputSchema: { type: "object", properties: {}, required: [] },
-  },
-  {
-    name: "sieve_findings_list",
-    description: "Lists findings from the most recent scan. Previews are redacted — no plaintext secret values.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        limit: { type: "number", description: "Max findings to return (default 50)" },
-      },
-      required: [],
-    },
-  },
-  {
-    name: "sieve_issue_list",
-    description: "Lists scanner health issues: unreadable sources, permission errors, parse failures.",
-    inputSchema: { type: "object", properties: {}, required: [] },
-  },
-  {
-    name: "sieve_scan_history",
-    description: "Returns past scan job summaries.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        limit: { type: "number", description: "Max jobs to return (default 10)" },
-      },
-      required: [],
-    },
-  },
-  {
-    name: "sieve_scan_status",
-    description: "Returns status of the current or most recent scan: idle, running, completed, or failed.",
-    inputSchema: { type: "object", properties: {}, required: [] },
-  },
-  {
-    name: "sieve_check_text",
-    description: "Checks whether text contains secrets. Returns boolean only — never echoes input or detected values.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        text: { type: "string", description: "Text to check for secrets" },
-      },
-      required: ["text"],
-    },
-  },
-  {
-    name: "sieve_redact_text",
-    description: "Redacts secrets from text, replacing values with sieve:// placeholders. Raw values are never returned.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        text: { type: "string", description: "Text to redact" },
-        project_key: { type: "string", description: "Namespace for placeholders (e.g. 'myapp')" },
-      },
-      required: ["text"],
-    },
-  },
-  {
-    name: "sieve_vault_run",
-    description: "Executes a command with macOS Keychain-resolved secrets injected as env vars. Returns exit code and line counts only — stdout/stderr content is never returned.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        command: { type: "string", description: "Shell command to execute" },
-        fingerprints: {
-          type: "array",
-          items: { type: "string" },
-          description: "Fingerprints of vault secrets to inject",
-        },
-      },
-      required: ["command"],
-    },
-  },
-];
+const APP_STORE_URL = "https://apps.apple.com/app/id6767409365";
+const SUPPORTED_PROTOCOLS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
-function respond(id, result) {
-  const msg = JSON.stringify({ jsonrpc: "2.0", id, result });
-  process.stdout.write(msg + "\n");
-}
-
-function respondError(id, code, message) {
-  const msg = JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } });
-  process.stdout.write(msg + "\n");
+function send(message) {
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n");
 }
 
 const rl = readline.createInterface({ input: process.stdin, terminal: false });
@@ -112,30 +30,47 @@ rl.on("line", (line) => {
     return;
   }
 
-  const { id, method } = req;
+  const { id, method, params } = req;
+  const isNotification = id === undefined || id === null;
 
-  if (method === "initialize") {
-    respond(id, {
-      protocolVersion: "2024-11-05",
-      capabilities: { tools: {} },
-      serverInfo: { name: "sieve-mcp", version: "1.0.0" },
-    });
-  } else if (method === "tools/list") {
-    respond(id, { tools: TOOLS });
-  } else if (method === "tools/call") {
-    respond(id, {
-      content: [
-        {
-          type: "text",
-          text: "This is the introspection stub. Install Sieve from the Mac App Store to use the full MCP server: https://apps.apple.com/app/sieve-ai-secret-scanner/id6747506504",
+  switch (method) {
+    case "initialize": {
+      const requested = params && params.protocolVersion;
+      send({
+        id,
+        result: {
+          protocolVersion: SUPPORTED_PROTOCOLS.includes(requested) ? requested : SUPPORTED_PROTOCOLS[0],
+          capabilities: { tools: {} },
+          serverInfo: { name: "sieve", version: "1.1.1" },
         },
-      ],
-    });
-  } else if (method === "notifications/initialized") {
-    // no response needed for notifications
-  } else {
-    if (id !== undefined && id !== null) {
-      respondError(id, -32601, "Method not found");
+      });
+      break;
     }
+    case "tools/list":
+      send({ id, result: { tools: TOOLS } });
+      break;
+    case "tools/call":
+      send({
+        id,
+        result: {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text:
+                "This is Sieve's registry stub, not the real server. Install Sieve for Mac (" +
+                APP_STORE_URL +
+                "), turn on Settings > MCP Server > Enable MCP Server, and point your client at " +
+                "/Applications/Sieve.app/Contents/MacOS/Sieve with the argument --mcp.",
+            },
+          ],
+        },
+      });
+      break;
+    case "ping":
+      send({ id, result: {} });
+      break;
+    default:
+      if (!isNotification) send({ id, error: { code: -32601, message: "Method not found" } });
   }
 });
