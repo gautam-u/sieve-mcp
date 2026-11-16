@@ -1,7 +1,7 @@
 {
   "name": "sieve-mcp",
-  "version": "1.0.0",
-  "description": "MCP server for Sieve — local AI chat history secret scanner for macOS",
+  "version": "1.1.1",
+  "description": "MCP server for Sieve, a Mac app that finds secrets leaked into AI coding tool chats. Registry stub; the real server ships in the app.",
   "main": "server.js",
   "bin": {
     "sieve-mcp": "./server.js"
@@ -9,9 +9,27 @@
   "scripts": {
     "start": "node server.js"
   },
-  "keywords": ["mcp", "security", "secrets", "ai", "claude"],
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "security",
+    "secrets",
+    "secret-scanning",
+    "redaction",
+    "claude-code",
+    "cursor",
+    "macos"
+  ],
   "license": "MIT",
   "engines": {
     "node": ">=18"
-  }
+  },
+  "files": [
+    "server.js",
+    "tools.json",
+    "skills/",
+    "README.md",
+    "LICENSE"
+  ],
+  "homepage": "https://gautam-u.github.io/sieve/"
 }
