@@ -275,6 +275,10 @@ function openSession({ timeoutMs = 5000 } = {}) {
         fail(new Error(`server wrote a non-JSON line to stdout: ${line}`));
         return;
       }
+      if (message === null || typeof message !== 'object' || Array.isArray(message)) {
+        fail(new Error(`server wrote something other than a JSON-RPC object: ${line}`));
+        return;
+      }
       const pending = waiting.get(message.id);
       if (pending) {
         clearTimeout(pending.timer);
@@ -308,9 +312,17 @@ function openSession({ timeoutMs = 5000 } = {}) {
     notify(message) {
       child.stdin.write(JSON.stringify(message) + '\n');
     },
+    kill() {
+      child.kill('SIGKILL');
+    },
     close() {
       return new Promise((resolve, reject) => {
+        const deadline = setTimeout(() => {
+          child.kill('SIGKILL');
+          reject(new Error(`server did not exit within ${timeoutMs}ms after stdin closed`));
+        }, timeoutMs);
         child.on('close', (code) => {
+          clearTimeout(deadline);
           if (failure) reject(failure);
           else if (code !== 0) reject(new Error(`server exited with code ${code}; stderr: ${stderr}`));
           else resolve();
@@ -321,8 +333,9 @@ function openSession({ timeoutMs = 5000 } = {}) {
   };
 }
 
-test('a full client handshake works step by step over one open connection', async () => {
+test('a full client handshake works step by step over one open connection', async (t) => {
   const session = openSession();
+  t.after(() => session.kill());
   const init = await session.request({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
   assert.ok(init.result.protocolVersion);
   session.notify({ jsonrpc: '2.0', method: 'notifications/initialized' });
