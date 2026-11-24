@@ -69,8 +69,13 @@ function exchange(messages, { timeoutMs = 5000 } = {}) {
           return;
         }
       }
+      if (code !== 0) {
+        finish(reject, new Error(`server exited with code ${code}; stderr: ${stderr}`));
+        return;
+      }
       finish(resolve, { responses, stderr, code });
     });
+    child.stdin.on('error', (err) => finish(reject, err));
 
     for (const message of messages) {
       const line = typeof message === 'string' ? message : JSON.stringify(message);
@@ -232,22 +237,103 @@ test('malformed input is ignored without crashing the server', async () => {
   assert.strictEqual(code, 0, 'server should exit cleanly after bad input');
 });
 
-test('a full client handshake works in sequence over one connection', async () => {
-  const { responses } = await exchange([
-    { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
-    { jsonrpc: '2.0', method: 'notifications/initialized' },
-    { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
-    {
-      jsonrpc: '2.0',
-      id: 3,
-      method: 'tools/call',
-      params: { name: 'sieve_check_text', arguments: { text: 'hello' } },
-    },
-  ]);
+/**
+ * Keep one server process open and talk to it like a real client: send a request,
+ * wait for its reply, then decide what to send next.
+ */
+function openSession({ timeoutMs = 5000 } = {}) {
+  const child = spawn(process.execPath, [SERVER], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let buffer = '';
+  let stderr = '';
+  const waiting = new Map();
+  let failure = null;
 
-  assert.strictEqual(responses.length, 3, 'three requests, one notification');
-  assert.deepStrictEqual(responses.map((r) => r.id), [1, 2, 3]);
-  assert.ok(responses[0].result.protocolVersion);
-  assert.strictEqual(responses[1].result.tools.length, TOOL_COUNT);
-  assert.ok(responses[2].result.content[0].text);
+  const fail = (err) => {
+    failure = failure || err;
+    child.kill('SIGKILL');
+    for (const { reject, timer } of waiting.values()) {
+      clearTimeout(timer);
+      reject(failure);
+    }
+    waiting.clear();
+  };
+
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk.toString();
+  });
+  child.stdout.on('data', (chunk) => {
+    buffer += chunk.toString();
+    let newline;
+    while ((newline = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, newline);
+      buffer = buffer.slice(newline + 1);
+      if (!line.trim()) continue;
+      let message;
+      try {
+        message = JSON.parse(line);
+      } catch {
+        fail(new Error(`server wrote a non-JSON line to stdout: ${line}`));
+        return;
+      }
+      const pending = waiting.get(message.id);
+      if (pending) {
+        clearTimeout(pending.timer);
+        waiting.delete(message.id);
+        pending.resolve(message);
+      } else {
+        fail(new Error(`unexpected message from server: ${line}`));
+      }
+    }
+  });
+  child.on('error', fail);
+  child.stdin.on('error', fail);
+  child.on('exit', (code) => {
+    if (waiting.size) fail(new Error(`server exited with code ${code} while a reply was pending; stderr: ${stderr}`));
+  });
+
+  return {
+    request(message) {
+      if (failure) return Promise.reject(failure);
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          waiting.delete(message.id);
+          const err = new Error(`no reply to request ${message.id} within ${timeoutMs}ms while stdin stayed open`);
+          fail(err);
+          reject(err);
+        }, timeoutMs);
+        waiting.set(message.id, { resolve, reject, timer });
+        child.stdin.write(JSON.stringify(message) + '\n');
+      });
+    },
+    notify(message) {
+      child.stdin.write(JSON.stringify(message) + '\n');
+    },
+    close() {
+      return new Promise((resolve, reject) => {
+        child.on('close', (code) => {
+          if (failure) reject(failure);
+          else if (code !== 0) reject(new Error(`server exited with code ${code}; stderr: ${stderr}`));
+          else resolve();
+        });
+        child.stdin.end();
+      });
+    },
+  };
+}
+
+test('a full client handshake works step by step over one open connection', async () => {
+  const session = openSession();
+  const init = await session.request({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
+  assert.ok(init.result.protocolVersion);
+  session.notify({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  const list = await session.request({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+  assert.strictEqual(list.result.tools.length, TOOL_COUNT);
+  const call = await session.request({
+    jsonrpc: '2.0',
+    id: 3,
+    method: 'tools/call',
+    params: { name: 'sieve_check_text', arguments: { text: 'hello' } },
+  });
+  assert.ok(call.result.content[0].text);
+  await session.close();
 });
