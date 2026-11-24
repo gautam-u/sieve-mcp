@@ -59,10 +59,16 @@ function exchange(messages, { timeoutMs = 5000 } = {}) {
     });
     child.on('error', (err) => finish(reject, err));
     child.on('close', (code) => {
-      const responses = stdout
-        .split('\n')
-        .filter((line) => line.trim().length > 0)
-        .map((line) => JSON.parse(line));
+      const responses = [];
+      for (const line of stdout.split('\n')) {
+        if (line.trim().length === 0) continue;
+        try {
+          responses.push(JSON.parse(line));
+        } catch {
+          finish(reject, new Error(`server wrote a non-JSON line to stdout: ${line}`));
+          return;
+        }
+      }
       finish(resolve, { responses, stderr, code });
     });
 
@@ -201,7 +207,7 @@ test('unknown methods with an id return JSON-RPC -32601', async () => {
 });
 
 test('notifications produce no response', async () => {
-  const { responses } = await exchange([
+  const { responses, code } = await exchange([
     { jsonrpc: '2.0', method: 'notifications/initialized' },
     { jsonrpc: '2.0', method: 'some/unknown/notification' },
   ]);
@@ -211,6 +217,7 @@ test('notifications produce no response', async () => {
     0,
     'a message without an id must never be answered'
   );
+  assert.strictEqual(code, 0, 'server must exit cleanly, not crash, after notifications');
 });
 
 test('malformed input is ignored without crashing the server', async () => {
