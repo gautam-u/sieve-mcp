@@ -17,7 +17,12 @@ const EXPECTED_TOOLS = [
   'sieve_check_text',
   'sieve_redact_text',
   'sieve_vault_run',
+  'sieve_projects_list',
+  'sieve_project_findings',
+  'sieve_project_scan_history',
 ];
+const TOOL_COUNT = EXPECTED_TOOLS.length;
+const pkg = require('../package.json');
 
 /**
  * Drive the server over stdio the way an MCP client would: write one JSON
@@ -69,7 +74,7 @@ function exchange(messages, { timeoutMs = 5000 } = {}) {
   });
 }
 
-test('initialize returns the MCP protocol version and server identity', async () => {
+test('initialize returns the newest protocol version and server identity', async () => {
   const { responses } = await exchange([
     { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
   ]);
@@ -78,19 +83,34 @@ test('initialize returns the MCP protocol version and server identity', async ()
   const [res] = responses;
   assert.strictEqual(res.jsonrpc, '2.0');
   assert.strictEqual(res.id, 1);
-  assert.strictEqual(res.result.protocolVersion, '2024-11-05');
-  assert.strictEqual(res.result.serverInfo.name, 'sieve-mcp');
-  assert.ok(res.result.serverInfo.version, 'serverInfo.version must be present');
+  assert.strictEqual(res.result.protocolVersion, '2025-11-25');
+  assert.strictEqual(res.result.serverInfo.name, 'sieve');
+  assert.strictEqual(res.result.serverInfo.version, pkg.version, 'serverInfo.version must match package.json');
   assert.deepStrictEqual(res.result.capabilities, { tools: {} });
 });
 
-test('tools/list advertises exactly the nine Sieve tools', async () => {
+test('initialize echoes a supported protocol version and falls back for an unknown one', async () => {
+  const { responses } = await exchange([
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05' } },
+    { jsonrpc: '2.0', id: 2, method: 'initialize', params: { protocolVersion: '1999-01-01' } },
+  ]);
+
+  assert.strictEqual(responses[0].result.protocolVersion, '2024-11-05');
+  assert.strictEqual(responses[1].result.protocolVersion, '2025-11-25');
+});
+
+test('ping returns an empty result', async () => {
+  const { responses } = await exchange([{ jsonrpc: '2.0', id: 9, method: 'ping' }]);
+  assert.deepStrictEqual(responses, [{ jsonrpc: '2.0', id: 9, result: {} }]);
+});
+
+test('tools/list advertises exactly the twelve Sieve tools', async () => {
   const { responses } = await exchange([
     { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
   ]);
 
   const tools = responses[0].result.tools;
-  assert.strictEqual(tools.length, 9, 'tool count must stay in sync with the Mac app');
+  assert.strictEqual(tools.length, TOOL_COUNT, 'tool count must stay in sync with the Mac app');
   assert.deepStrictEqual(
     tools.map((t) => t.name).sort(),
     [...EXPECTED_TOOLS].sort()
@@ -132,6 +152,8 @@ test('tools carrying mandatory arguments declare them as required', async () => 
   assert.deepStrictEqual(byName.sieve_check_text.inputSchema.required, ['text']);
   assert.deepStrictEqual(byName.sieve_redact_text.inputSchema.required, ['text']);
   assert.deepStrictEqual(byName.sieve_vault_run.inputSchema.required, ['command']);
+  assert.deepStrictEqual(byName.sieve_project_findings.inputSchema.required, ['project_id']);
+  assert.deepStrictEqual(byName.sieve_project_scan_history.inputSchema.required, ['project_id']);
 
   // Read-only introspection tools take no arguments at all.
   for (const name of [
@@ -139,6 +161,7 @@ test('tools carrying mandatory arguments declare them as required', async () => 
     'sieve_self_test',
     'sieve_issue_list',
     'sieve_scan_status',
+    'sieve_projects_list',
   ]) {
     assert.deepStrictEqual(
       byName[name].inputSchema.required,
@@ -148,7 +171,7 @@ test('tools carrying mandatory arguments declare them as required', async () => 
   }
 });
 
-test('tools/call returns the App Store redirect rather than executing', async () => {
+test('tools/call returns an error pointing at the real server rather than executing', async () => {
   const { responses } = await exchange([
     {
       jsonrpc: '2.0',
@@ -158,10 +181,12 @@ test('tools/call returns the App Store redirect rather than executing', async ()
     },
   ]);
 
-  const content = responses[0].result.content;
+  const { content, isError } = responses[0].result;
+  assert.strictEqual(isError, true);
   assert.strictEqual(content[0].type, 'text');
-  assert.match(content[0].text, /introspection stub/i);
+  assert.match(content[0].text, /registry stub/i);
   assert.match(content[0].text, /apps\.apple\.com/);
+  assert.match(content[0].text, /--mcp/);
 });
 
 test('unknown methods with an id return JSON-RPC -32601', async () => {
@@ -216,6 +241,6 @@ test('a full client handshake works in sequence over one connection', async () =
   assert.strictEqual(responses.length, 3, 'three requests, one notification');
   assert.deepStrictEqual(responses.map((r) => r.id), [1, 2, 3]);
   assert.ok(responses[0].result.protocolVersion);
-  assert.strictEqual(responses[1].result.tools.length, 9);
+  assert.strictEqual(responses[1].result.tools.length, TOOL_COUNT);
   assert.ok(responses[2].result.content[0].text);
 });
